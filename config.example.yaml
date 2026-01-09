@@ -1,0 +1,127 @@
+# FlowPilot 配置示例
+# 复制到 ~/.flowpilot/config.yaml 并修改
+
+# LLM 提供商配置
+llm:
+  # 默认使用的提供商（claude | gemini | zhipu）
+  default_provider: claude
+
+  # 提供商配置
+  providers:
+    claude:
+      model: claude-sonnet-4.5  # claude-sonnet-4.5 | claude-opus-4.5
+      api_key_env: ANTHROPIC_API_KEY
+      max_tokens: 4096
+      temperature: 0.7
+
+    gemini:
+      model: gemini-2.0-flash-exp  # gemini-2.0-flash-exp | gemini-2.0-pro-exp
+      api_key_env: GOOGLE_API_KEY
+      max_tokens: 8192
+      temperature: 0.7
+
+    zhipu:
+      model: glm-4-plus  # glm-4-plus | glm-4-flash
+      api_key_env: ZHIPU_API_KEY
+      max_tokens: 4096
+      temperature: 0.7
+
+  # 场景路由规则（可选）
+  routing:
+    - scenario: quick_query
+      provider: gemini
+      model: gemini-2.0-flash-exp
+    - scenario: complex_analysis
+      provider: claude
+      model: claude-sonnet-4.5
+
+# 主机配置
+hosts:
+  # 生产环境示例
+  prod-api-1:
+    env: prod
+    user: ubuntu
+    addr: 10.0.1.21
+    port: 22
+    jump: bastion-prod
+    tags: [api, payment]
+
+  prod-api-2:
+    env: prod
+    user: ubuntu
+    addr: 10.0.1.22
+    port: 22
+    jump: bastion-prod
+    tags: [api, payment]
+
+  # Staging 环境示例
+  staging-api-1:
+    env: staging
+    user: ubuntu
+    addr: staging-api-1.internal
+    port: 22
+    tags: [api, payment]
+
+# 跳板机配置
+jumps:
+  bastion-prod:
+    addr: bastion.prod.example.com
+    user: ubuntu
+    port: 22
+
+  bastion-staging:
+    addr: bastion.staging.example.com
+    user: ubuntu
+    port: 22
+
+# 服务配置
+services:
+  payment:
+    description: "支付服务"
+    hosts:
+      prod: [prod-api-1, prod-api-2]
+      staging: [staging-api-1]
+    logs:
+      path: /var/log/payment/app.log
+      format: json
+    k8s:
+      selector: app=payment
+      namespace:
+        prod: payments
+        staging: payments-stg
+    healthcheck:
+      url: http://localhost:8080/health
+
+  user-service:
+    description: "用户服务"
+    hosts:
+      prod: [prod-api-1, prod-api-2]
+      staging: [staging-api-1]
+    logs:
+      path: /var/log/user-service/app.log
+      format: text
+
+# 策略规则
+policies:
+  # 生产环境写操作需确认
+  - name: prod_write_protection
+    condition:
+      env: prod
+      action_type: write
+    effect: require_confirm
+    message: "生产环境写操作需要确认"
+
+  # 批量操作限制
+  - name: batch_operation_limit
+    condition:
+      target_count: ">5"
+    effect: require_confirm
+    message: "批量操作超过 5 台主机需要确认"
+
+  # 禁止生产环境破坏性操作
+  - name: destructive_deny
+    condition:
+      env: prod
+      action_type: destructive
+    effect: deny
+    message: "禁止在生产环境执行破坏性操作"
