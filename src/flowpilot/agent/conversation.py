@@ -57,6 +57,27 @@ SYSTEM_PROMPT = """你是 FlowPilot，一个专业的服务器运维 AI 助手�
   - file: 指定文件（可选）
   - staged: 是否查看已暂存
 
+### 配置管理
+- `host_list`: 列出所有主机
+  - group: 按分组过滤（可选）
+  - env: 按环境过滤（可选）
+
+- `host_add`: 添加新主机
+  - alias: 主机别名
+  - addr: 主机地址
+  - user: SSH 用户名
+  - env: 环境（dev/staging/prod）
+  - description: 中文备注
+  - group: 分组名称
+
+- `host_update`: 更新主机配置
+  - alias: 主机别名
+  - description: 新备注（可选）
+  - group: 新分组（可选）
+
+- `host_remove`: 移除主机
+  - alias: 主机别名
+
 ## 常见运维场景命令参考
 
 ### 系统信息

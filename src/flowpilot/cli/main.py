@@ -167,6 +167,19 @@ async def _chat_async(
         tool_registry.register(GitLogTool(ssh_tool))
         tool_registry.register(GitDiffTool(ssh_tool))
 
+        # 注册配置管理 Tools
+        from flowpilot.tools.config import (
+            HostAddTool,
+            HostListTool,
+            HostRemoveTool,
+            HostUpdateTool,
+        )
+
+        tool_registry.register(HostAddTool())
+        tool_registry.register(HostListTool())
+        tool_registry.register(HostRemoveTool())
+        tool_registry.register(HostUpdateTool())
+
         # 3. 初始化 Agent
         router = ProviderRouter(config.llm)
         llm_provider = router.get_provider(provider_name=provider)
