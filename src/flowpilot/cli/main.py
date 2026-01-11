@@ -678,6 +678,132 @@ def alias(
         console.print(f"[red]未知操作: {action}[/red]")
 
 
+@app.command()
+def hosts(
+    group: str = typer.Option(None, "--group", "-g", help="按分组过滤"),
+    env: str = typer.Option(None, "--env", "-e", help="按环境过滤"),
+) -> None:
+    """列出所有主机（支持分组和过滤）.
+
+    Examples:
+        flowpilot hosts                 # 列出所有主机
+        flowpilot hosts -g 生产服务器    # 按分组筛选
+        flowpilot hosts -e prod         # 按环境筛选
+    """
+    try:
+        loader = ConfigLoader()
+        config = loader.load()
+
+        if not config.hosts:
+            console.print("[yellow]未配置任何主机[/yellow]")
+            return
+
+        # 按分组组织
+        grouped: dict[str, list[tuple[str, Any]]] = {}
+        for name, host in config.hosts.items():
+            # 应用过滤
+            if group and host.group != group:
+                continue
+            if env and host.env != env:
+                continue
+
+            g = host.group or "default"
+            if g not in grouped:
+                grouped[g] = []
+            grouped[g].append((name, host))
+
+        if not grouped:
+            console.print("[yellow]无匹配的主机[/yellow]")
+            return
+
+        console.print("\n[bold]📡 主机列表[/bold]\n")
+
+        for grp, hosts_list in sorted(grouped.items()):
+            console.print(f"[bold cyan]【{grp}】[/bold cyan]")
+            for name, host in hosts_list:
+                env_color = {"prod": "red", "staging": "yellow", "dev": "green"}.get(host.env, "white")
+                desc = f" - {host.description}" if host.description else ""
+                console.print(f"  [{env_color}]{host.env}[/{env_color}] {name}: {host.user}@{host.addr}{desc}")
+            console.print()
+
+    except FileNotFoundError as e:
+        console.print(f"[red]❌ {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]❌ 加载配置失败: {e}[/red]")
+
+
+@app.command()
+def exec(
+    host: str = typer.Argument(..., help="主机别名或 @group（批量）"),
+    command: str = typer.Argument(..., help="要执行的命令"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认"),
+) -> None:
+    """快捷执行命令（绕过 LLM）.
+
+    Examples:
+        flowpilot exec ubuntu "uptime"           # 单机执行
+        flowpilot exec ubuntu "df -h" -y         # 跳过确认
+        flowpilot exec @生产服务器 "uptime"       # 分组批量执行
+    """
+    asyncio.run(_exec_async(host, command, yes))
+
+
+async def _exec_async(host: str, command: str, yes: bool) -> None:
+    """执行快捷命令."""
+    try:
+        loader = ConfigLoader()
+        config = loader.load()
+        policy_engine = PolicyEngine(config)
+
+        from flowpilot.tools.ssh import SSHExecTool, SSHExecBatchTool
+
+        ssh_tool = SSHExecTool(config, policy_engine)
+
+        # 检查是否是分组批量执行
+        if host.startswith("@"):
+            group_name = host[1:]
+            target_hosts = [
+                name for name, h in config.hosts.items()
+                if h.group == group_name
+            ]
+            if not target_hosts:
+                console.print(f"[red]分组 '{group_name}' 中没有主机[/red]")
+                return
+
+            console.print(f"[bold]⚡ 批量执行: {len(target_hosts)} 台主机[/bold]")
+            for h in target_hosts:
+                console.print(f"  - {h}")
+
+            if not yes:
+                import typer
+                if not typer.confirm("确认执行?"):
+                    console.print("[yellow]已取消[/yellow]")
+                    return
+
+            # 批量执行
+            batch_tool = SSHExecBatchTool(config, policy_engine)
+            result = await batch_tool.execute(hosts=target_hosts, command=command)
+            console.print(f"\n{result.output}")
+
+        else:
+            # 单机执行
+            console.print(f"[bold]⚡ 执行: {host}[/bold]")
+            console.print(f"[dim]$ {command}[/dim]\n")
+
+            result = await ssh_tool.execute(host=host, command=command, _confirm_token="auto" if yes else None)
+
+            if result.status.value == "success":
+                console.print(result.output)
+            elif result.status.value == "pending_confirm":
+                console.print("[yellow]需要确认，请使用 -y 参数跳过[/yellow]")
+            else:
+                console.print(f"[red]❌ {result.error}[/red]")
+
+    except FileNotFoundError as e:
+        console.print(f"[red]❌ {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]❌ 执行失败: {e}[/red]")
+
+
 if __name__ == "__main__":
     app()
-

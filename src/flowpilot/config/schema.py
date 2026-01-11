@@ -41,6 +41,10 @@ class HostConfig(BaseModel):
     jump: str | None = Field(None, description="跳板机别名")
     tags: list[str] = Field(default_factory=list, description="主机标签")
     ssh_key: str | None = Field(None, description="SSH 密钥路径")
+    # 新增：中文友好字段
+    description: str = Field(default="", description="中文备注/描述")
+    group: str = Field(default="default", description="分组名称")
+
 
 
 class JumpConfig(BaseModel):
