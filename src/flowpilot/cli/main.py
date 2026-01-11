@@ -97,11 +97,13 @@ def init() -> None:
 
 @app.command()
 def chat(
-    prompt: str = typer.Argument(..., help="自然语言请求"),
+    prompt: str = typer.Argument(None, help="自然语言请求（session 模式可省略）"),
     provider: str = typer.Option(None, "--provider", "-p", help="指定 LLM 提供商"),
     env: str = typer.Option(None, "--env", "-e", help="强制指定环境"),
     dry_run: bool = typer.Option(False, "--dry-run", help="仅生成 Plan，不执行"),
     yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（仅非生产环境）"),
+    session: bool = typer.Option(False, "--session", "-s", help="交互式会话模式"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON 格式"),
     verbose: bool = typer.Option(False, "--verbose", help="显示详细信息"),
 ) -> None:
     """执行自然语言请求.
@@ -110,8 +112,15 @@ def chat(
         flowpilot chat "查看 prod-api-3 的运行时间"
         flowpilot chat "排查 payment 服务错误" --provider claude
         flowpilot chat "重启服务" -y  # 跳过确认
+        flowpilot chat --session       # 交互式会话
+        flowpilot chat "查看状态" --json  # JSON 输出
     """
-    asyncio.run(_chat_async(prompt, provider, env, dry_run, yes, verbose))
+    if session:
+        asyncio.run(_session_mode(provider, env, dry_run, yes, json_output, verbose))
+    elif prompt:
+        asyncio.run(_chat_async(prompt, provider, env, dry_run, yes, json_output, verbose))
+    else:
+        console.print("[red]请提供请求内容或使用 --session 模式[/red]")
 
 
 async def _chat_async(
@@ -120,9 +129,14 @@ async def _chat_async(
     env: str | None,
     dry_run: bool,
     yes: bool,
+    json_output: bool,
     verbose: bool,
-) -> None:
-    """异步执行 chat 命令."""
+) -> dict | None:
+    """异步执行 chat 命令.
+
+    Returns:
+        如果 json_output=True，返回结果字典
+    """
 
     try:
         # 1. 加载配置
@@ -252,6 +266,57 @@ async def _chat_async(
             import traceback
 
             traceback.print_exc()
+
+
+async def _session_mode(
+    provider: str | None,
+    env: str | None,
+    dry_run: bool,
+    yes: bool,
+    json_output: bool,
+    verbose: bool,
+) -> None:
+    """交互式会话模式."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
+
+    console.print("\n[bold cyan]🤖 FlowPilot 交互式会话[/bold cyan]")
+    console.print("输入请求，按 Ctrl+D 或输入 'exit' 退出\n")
+
+    prompt_session: PromptSession = PromptSession(history=InMemoryHistory())
+
+    while True:
+        try:
+            user_input = await asyncio.to_thread(
+                prompt_session.prompt,
+                "flowpilot> ",
+            )
+
+            if not user_input.strip():
+                continue
+
+            if user_input.strip().lower() in ("exit", "quit", "q"):
+                console.print("[dim]再见！[/dim]")
+                break
+
+            # 执行请求
+            await _chat_async(
+                user_input,
+                provider,
+                env,
+                dry_run,
+                yes,
+                json_output,
+                verbose,
+            )
+            console.print()  # 空行分隔
+
+        except EOFError:
+            console.print("\n[dim]再见！[/dim]")
+            break
+        except KeyboardInterrupt:
+            console.print("\n[yellow]已中断[/yellow]")
+            continue
 
 
 @app.command()
@@ -561,5 +626,58 @@ def import_hosts(
         console.print("[dim]使用 --output 或 --append 保存配置[/dim]")
 
 
+@app.command()
+def alias(
+    action: str = typer.Argument("list", help="操作: list | add | remove"),
+    name: str = typer.Argument(None, help="别名名称"),
+    command: str = typer.Argument(None, help="完整命令（add 时需要）"),
+) -> None:
+    """管理命令别名.
+
+    Examples:
+        flowpilot alias                     # 列出所有别名
+        flowpilot alias list                # 列出所有别名
+        flowpilot alias add mylog "查看nginx日志"  # 添加别名
+        flowpilot alias remove mylog        # 移除别名
+    """
+    from flowpilot.cli.aliases import AliasManager
+
+    manager = AliasManager()
+
+    if action == "list":
+        all_aliases = manager.list_all()
+
+        console.print("\n[bold]📝 内置别名:[/bold]")
+        for alias_name, cmd in all_aliases["builtin"].items():
+            console.print(f"  [cyan]{alias_name}[/cyan] → {cmd}")
+
+        if all_aliases["user"]:
+            console.print("\n[bold]👤 用户别名:[/bold]")
+            for alias_name, cmd in all_aliases["user"].items():
+                console.print(f"  [green]{alias_name}[/green] → {cmd}")
+        else:
+            console.print("\n[dim]暂无用户自定义别名[/dim]")
+
+    elif action == "add":
+        if not name or not command:
+            console.print("[red]用法: flowpilot alias add <名称> <命令>[/red]")
+            return
+        manager.add(name, command)
+        console.print(f"[green]✅ 已添加别名: {name} → {command}[/green]")
+
+    elif action == "remove":
+        if not name:
+            console.print("[red]用法: flowpilot alias remove <名称>[/red]")
+            return
+        if manager.remove(name):
+            console.print(f"[green]✅ 已移除别名: {name}[/green]")
+        else:
+            console.print(f"[yellow]别名不存在: {name}[/yellow]")
+
+    else:
+        console.print(f"[red]未知操作: {action}[/red]")
+
+
 if __name__ == "__main__":
     app()
+

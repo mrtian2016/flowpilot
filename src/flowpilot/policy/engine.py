@@ -32,6 +32,9 @@ class PolicyDecision:
 class PolicyEngine:
     """策略引擎."""
 
+    # Token 过期时间（秒）
+    TOKEN_TTL_SECONDS = 300  # 5 分钟
+
     def __init__(self, config: FlowPilotConfig) -> None:
         """初始化策略引擎.
 
@@ -40,6 +43,7 @@ class PolicyEngine:
         """
         self.config = config
         self._confirm_tokens: dict[str, dict[str, Any]] = {}  # token -> 请求信息
+
 
     def check(
         self,
@@ -84,7 +88,7 @@ class PolicyEngine:
         )
 
     def validate_confirm_token(self, token: str) -> bool:
-        """验证确认 token.
+        """验证确认 token（含过期检查）.
 
         Args:
             token: 确认 token
@@ -92,7 +96,21 @@ class PolicyEngine:
         Returns:
             是否有效
         """
-        return token in self._confirm_tokens
+        import time
+
+        if token not in self._confirm_tokens:
+            return False
+
+        token_data = self._confirm_tokens[token]
+        created_at = token_data.get("created_at", 0)
+
+        # 检查是否过期
+        if time.time() - created_at > self.TOKEN_TTL_SECONDS:
+            # 清理过期 token
+            del self._confirm_tokens[token]
+            return False
+
+        return True
 
     def consume_confirm_token(self, token: str) -> dict[str, Any] | None:
         """消费确认 token（一次性）.
@@ -239,9 +257,13 @@ class PolicyEngine:
         Returns:
             确认 token
         """
+        import time
+
         token = f"conf_{secrets.token_hex(16)}"
         self._confirm_tokens[token] = {
             "rule": rule.name,
             "args": args,
+            "created_at": time.time(),
         }
         return token
+

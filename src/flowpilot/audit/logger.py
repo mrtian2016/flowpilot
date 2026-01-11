@@ -159,7 +159,34 @@ class AuditLogger:
         finally:
             session.close()
 
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        """获取单个会话记录.
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            会话记录或 None
+        """
+        session = self.Session()
+        try:
+            record = session.query(AuditSession).filter_by(session_id=session_id).first()
+            if not record:
+                return None
+
+            return {
+                "session_id": record.session_id,
+                "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+                "user": record.user,
+                "input": record.input,
+                "status": record.status,
+                "duration_sec": record.total_duration_sec,
+            }
+        finally:
+            session.close()
+
     def get_session_details(self, session_id: str) -> dict[str, Any] | None:
+
         """获取会话详情（含 Tool 调用）.
 
         Args:
