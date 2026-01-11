@@ -1,99 +1,110 @@
 # FlowPilot 快速开始指南
 
-## 1. 安装依赖
+## 前提条件
+
+- Python 3.12+
+- uv 包管理器
+- 至少一个 LLM API Key（Claude/Gemini/智谱）
+
+## 安装步骤
+
+### 1. 克隆并安装
 
 ```bash
-# 确保已安装 uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
+cd /Users/tianjy/flowpilot
 
-# 安装项目依赖
+# 同步依赖
 uv sync
 
-# 或安装开发依赖
-uv sync --all-extras
-```
+# 激活虚拟环境
+source .venv/bin/activate
 
-## 2. 配置环境
-
-### 方式 1: 使用 Makefile（推荐）
-
-```bash
-make init-config
-```
-
-### 方式 2: 手动配置
-
-```bash
-# 创建配置目录
-mkdir -p ~/.flowpilot
-
-# 复制配置文件
-cp config.example.yaml ~/.flowpilot/config.yaml
-cp .env.example .env
-
-# 编辑配置文件
-vim ~/.flowpilot/config.yaml
-vim .env
-```
-
-## 3. 配置 API Keys
-
-编辑 `.env` 文件，填入至少一个 LLM 提供商的 API Key：
-
-```bash
-# Claude（推荐）
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-
-# 或 Gemini（便宜快速）
-GOOGLE_API_KEY=AIzaxxxxx
-
-# 或 智谱（国内）
-ZHIPU_API_KEY=xxxxx
-```
-
-## 4. 配置主机信息
-
-编辑 `~/.flowpilot/config.yaml`，添加你的主机配置：
-
-```yaml
-hosts:
-  my-server:
-    env: staging
-    user: ubuntu
-    addr: your-server.com
-    port: 22
-    tags: [api]
-```
-
-## 5. 测试安装
-
-```bash
-# 查看帮助
-uv run flowpilot --help
-
-# 或安装后直接使用
+# 安装为可执行命令
 uv pip install -e .
-flowpilot --version
 ```
 
-## 6. 开发命令
+### 2. 初始化配置
 
 ```bash
-# 查看所有命令
-make help
-
-# 运行测试
-make test
-
-# 代码检查
-make lint
-
-# 代码格式化
-make format
-
-# 完整检查
-make check
+flowpilot init
 ```
+
+这会创建 `~/.flowpilot/config.yaml` 配置文件。
+
+### 3. 配置 API Keys
+
+编辑 `~/.bashrc` 或 `~/.zshrc`，添加：
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GOOGLE_API_KEY="AIza..."
+export ZHIPU_API_KEY="..."
+```
+
+然后重新加载：
+
+```bash
+source ~/.zshrc
+```
+
+### 4. 编辑配置文件
+
+编辑 `~/.flowpilot/config.yaml`，添加你的主机配置。
+
+### 5. 验证配置
+
+```bash
+flowpilot config validate
+```
+
+## 基本使用
+
+### 自然语言交互
+
+```bash
+# 基础命令
+flowpilot chat "查看服务器运行时间"
+
+# 指定 Provider
+flowpilot chat "查看磁盘使用" --provider claude
+
+# Dry-run 模式
+flowpilot chat "删除临时文件" --dry-run
+```
+
+### 查看历史
+
+```bash
+flowpilot history --last 10
+```
+
+### 生成报告
+
+```bash
+flowpilot report <session_id>
+```
+
+### 配置管理
+
+```bash
+flowpilot config show
+flowpilot config validate
+```
+
+## 运行测试
+
+```bash
+# 所有测试（56 个）
+.venv/bin/python -m pytest tests/unit/ -v
+
+# 生成覆盖率报告
+.venv/bin/python -m pytest tests/unit/ --cov=src/flowpilot
+```
+
+✅ **所有 56 个单元测试通过！**
+
+# 或检查版本
+python --version  # 应该是 3.12.x
 
 ## 7. 下一步
 

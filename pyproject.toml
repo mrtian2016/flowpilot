@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
     # LLM SDKs
     "anthropic>=0.40.0",              # Claude
-    "google-generativeai>=0.8.0",     # Gemini
+    "google-genai>=1.0.0",            # Gemini (新版 SDK)
     "zhipuai>=2.1.0",                 # 智谱 GLM
     # 核心框架
     "pydantic>=2.8",                  # Schema 校验与配置
