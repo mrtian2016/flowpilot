@@ -101,6 +101,7 @@ def chat(
     provider: str = typer.Option(None, "--provider", "-p", help="指定 LLM 提供商"),
     env: str = typer.Option(None, "--env", "-e", help="强制指定环境"),
     dry_run: bool = typer.Option(False, "--dry-run", help="仅生成 Plan，不执行"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（仅非生产环境）"),
     verbose: bool = typer.Option(False, "--verbose", help="显示详细信息"),
 ) -> None:
     """执行自然语言请求.
@@ -108,8 +109,9 @@ def chat(
     Examples:
         flowpilot chat "查看 prod-api-3 的运行时间"
         flowpilot chat "排查 payment 服务错误" --provider claude
+        flowpilot chat "重启服务" -y  # 跳过确认
     """
-    asyncio.run(_chat_async(prompt, provider, env, dry_run, verbose))
+    asyncio.run(_chat_async(prompt, provider, env, dry_run, yes, verbose))
 
 
 async def _chat_async(
@@ -117,9 +119,11 @@ async def _chat_async(
     provider: str | None,
     env: str | None,
     dry_run: bool,
+    yes: bool,
     verbose: bool,
 ) -> None:
     """异步执行 chat 命令."""
+
     try:
         # 1. 加载配置
         loader = ConfigLoader()
@@ -130,9 +134,24 @@ async def _chat_async(
         audit_logger = AuditLogger()
         tool_registry = ToolRegistry()
 
-        # 注册 Tools
-        tool_registry.register(SSHExecTool(config, policy_engine))
+        # 注册 SSH Tools
+        ssh_tool = SSHExecTool(config, policy_engine)
+        tool_registry.register(ssh_tool)
         tool_registry.register(SSHExecBatchTool(config, policy_engine))
+
+        # 注册日志 Tools
+        from flowpilot.tools.logs import DockerLogsTool, LogSearchTool, LogTailTool
+
+        tool_registry.register(LogTailTool(ssh_tool))
+        tool_registry.register(LogSearchTool(ssh_tool))
+        tool_registry.register(DockerLogsTool(ssh_tool))
+
+        # 注册 Git Tools
+        from flowpilot.tools.git import GitDiffTool, GitLogTool, GitStatusTool
+
+        tool_registry.register(GitStatusTool(ssh_tool))
+        tool_registry.register(GitLogTool(ssh_tool))
+        tool_registry.register(GitDiffTool(ssh_tool))
 
         # 3. 初始化 Agent
         router = ProviderRouter(config.llm)
@@ -264,21 +283,122 @@ def history(
         console.print(f"[red]❌ 查询失败: {e}[/red]")
 
 
+@app.command(name="continue")
+def continue_session(
+    session_id: str = typer.Argument(None, help="会话 ID（可选，默认最近会话）"),
+    provider: str = typer.Option(None, "--provider", "-p", help="指定 LLM 提供商"),
+) -> None:
+    """继续上次会话.
+
+    Examples:
+        flowpilot continue                      # 继续最近会话
+        flowpilot continue sess_1768148771      # 指定会话
+    """
+    from flowpilot.audit.logger import AuditLogger
+
+    audit_logger = AuditLogger()
+
+    # 获取会话
+    if session_id:
+        session = audit_logger.get_session(session_id)
+    else:
+        # 获取最近的会话
+        recent = audit_logger.get_recent_sessions(limit=1)
+        if not recent:
+            console.print("[yellow]没有可继续的会话[/yellow]")
+            return
+        session = recent[0]
+        session_id = session["session_id"]
+
+    if not session:
+        console.print(f"[red]会话未找到: {session_id}[/red]")
+        return
+
+    # 显示会话信息
+    console.print(f"\n[bold]📂 继续会话: {session_id}[/bold]")
+    console.print(f"原始请求: {session.get('input', 'N/A')}")
+    console.print(f"上次状态: {session.get('status', 'N/A')}\n")
+
+    # 提示用户输入新请求
+    try:
+        from prompt_toolkit import prompt
+
+        new_prompt = prompt("继续> ")
+        if new_prompt.strip():
+            # 调用 chat 命令
+            asyncio.run(_chat_async(
+                f"继续之前的任务。之前的请求是: {session.get('input', '')}。现在: {new_prompt}",
+                provider,
+                None,  # env
+                False,  # dry_run
+                False,  # yes
+                False,  # verbose
+            ))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]已取消[/yellow]")
+
 @app.command()
 def report(
     session_id: str = typer.Argument(..., help="会话 ID"),
+    format: str = typer.Option("markdown", "--format", "-f", help="输出格式: markdown | html"),
+    output: str = typer.Option(None, "--output", "-o", help="输出到文件"),
 ) -> None:
-    """生成会话报告."""
+    """生成会话报告.
+
+    Examples:
+        flowpilot report sess_123456                    # 显示 Markdown
+        flowpilot report sess_123456 -f html -o r.html  # 导出 HTML
+    """
     try:
         audit_logger = AuditLogger()
         reporter = ReportGenerator(audit_logger)
 
-        markdown_report = reporter.generate_session_report(session_id)
+        report_content = reporter.generate_session_report(session_id, format=format)
 
-        console.print(Markdown(markdown_report))
+        if output:
+            from pathlib import Path
+
+            Path(output).write_text(report_content, encoding="utf-8")
+            console.print(f"[green]✅ 报告已保存到: {output}[/green]")
+        elif format == "html":
+            console.print("[yellow]HTML 格式请使用 -o 参数保存到文件[/yellow]")
+            console.print(report_content[:500] + "...")
+        else:
+            console.print(Markdown(report_content))
 
     except Exception as e:
         console.print(f"[red]❌ 生成报告失败: {e}[/red]")
+
+
+@app.command()
+def stats(
+    since: str = typer.Option("7d", "--since", "-s", help="时间范围: 1d, 7d, 30d"),
+) -> None:
+    """查看使用统计.
+
+    Examples:
+        flowpilot stats              # 最近 7 天
+        flowpilot stats --since 30d  # 最近 30 天
+    """
+    try:
+        audit_logger = AuditLogger()
+        reporter = ReportGenerator(audit_logger)
+
+        stats = reporter.generate_statistics(since=since)
+
+        console.print(f"\n[bold]📊 FlowPilot 使用统计（最近 {stats['period']}）[/bold]\n")
+        console.print(f"  总会话数: [bold]{stats['total']}[/bold]")
+        console.print(f"  成功: [green]{stats['success']}[/green]")
+        console.print(f"  失败: [red]{stats['error']}[/red]")
+        console.print(f"  成功率: [bold]{stats['success_rate']}%[/bold]\n")
+
+        if stats.get("top_tools"):
+            console.print("[bold]🔧 最常用工具:[/bold]")
+            for name, count in stats["top_tools"]:
+                console.print(f"  • {name}: {count} 次")
+
+    except Exception as e:
+        console.print(f"[red]❌ 获取统计失败: {e}[/red]")
 
 
 @app.command()
