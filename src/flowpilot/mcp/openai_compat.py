@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from flowpilot.agent.conversation import SYSTEM_PROMPT
 from flowpilot.agent.router import ProviderRouter
 from flowpilot.config.loader import ConfigLoader
+from flowpilot.audit.logger import AuditLogger
 
 from .registry import mcp_registry
 
@@ -250,19 +251,49 @@ async def chat_completions(
         )
 
     # 非流式响应 - Agent 循环
+    session_id = f"sess_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    start_time = time.time()
+    user_input = messages[-1]["content"] if messages else ""
+    if isinstance(user_input, list):  # 处理多模态输入
+        user_input = next((item["content"] for item in user_input if item.get("type") == "text"), json.dumps(user_input))
+
+    audit_logger = AuditLogger()
+    audit_logger.create_session(
+        session_id=session_id,
+        user_input=str(user_input),
+        input_mode="chat_api"
+    )
+
     try:
         final_response = await _agent_loop(
             provider=provider,
             messages=messages,
             tools=tools,
             max_iterations=request.max_iterations,
+            session_id=session_id,
+            audit_logger=audit_logger,
         )
+        status = "completed"
     except Exception as e:
+        status = "failed"
+        audit_logger.update_session(session_id=session_id, status="failed", final_output=str(e), total_duration_sec=time.time() - start_time)
         logger.exception(f"Agent 循环失败: {e}")
         raise HTTPException(status_code=500, detail=f"LLM 调用失败: {e}") from e
 
     # 构建响应
     usage = final_response.get("usage", {})
+    final_content = final_response.get("content", "")
+    
+    # 更新审计会话
+    audit_logger.update_session(
+        session_id=session_id,
+        status=status,
+        final_output=final_content,
+        provider=request.model,
+        token_usage=usage,
+        total_duration_sec=time.time() - start_time,
+        agent_reasoning=final_response.get("reasoning", "") # 如果有推理内容
+    )
     tool_calls_data = final_response.get("tool_calls", [])
     
     # 构建消息
@@ -344,6 +375,8 @@ async def _agent_loop(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     max_iterations: int,
+    session_id: str,
+    audit_logger: AuditLogger,
 ) -> dict[str, Any]:
     """执行 Agent 循环.
     
@@ -351,8 +384,11 @@ async def _agent_loop(
     1. LLM 返回最终文本响应 (无工具调用)
     2. 达到最大迭代次数
     """
+
     conversation = messages.copy()
     final_response = None
+    accumulated_reasoning = []
+    
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     
     for iteration in range(max_iterations):
@@ -378,6 +414,16 @@ async def _agent_loop(
         # 执行工具调用
         logger.info(f"执行 {len(tool_calls)} 个工具调用")
         
+        # 记录推理过程（如果有 content）
+        content = response.get("content", "")
+        if content:
+            accumulated_reasoning.append(content)
+            # 可以在这里实时更新 session 的 reasoning
+            audit_logger.update_session(
+                session_id=session_id, 
+                agent_reasoning="\n---\n".join(accumulated_reasoning)
+            )
+        
         # 添加 assistant 消息 (包含工具调用)
         assistant_content = response.get("content", "")
         conversation.append({
@@ -390,11 +436,40 @@ async def _agent_loop(
         for tc in tool_calls:
             tool_name = tc["name"]
             tool_args = tc.get("arguments", {})
-            tool_id = tc.get("id", f"call_{tool_name}")
+            # 获取或生成 tool_id
+            tool_id = tc.get("id")
+            if not tool_id:
+                # 如果没有 ID，生成一个唯一的 (带 UUID)
+                tool_id = f"call_{tool_name}_{uuid.uuid4().hex[:8]}"
+            
+            # 为数据库生成全局唯一的 call_id (session_id + tool_id)
+            # 避免不同会话中出现相同的 tool_id (如 call_0) 导致唯一性冲突
+            db_call_id = f"{session_id}_{tool_id}"
             
             try:
                 logger.debug(f"调用工具: {tool_name}({tool_args})")
+                
+                # 记录工具调用开始
+                start_tool = time.time()
+                audit_logger.add_tool_call(
+                    call_id=db_call_id,
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    status="running"
+                )
+                
                 result = await mcp_registry.call_tool(tool_name, tool_args)
+                
+                # 记录工具调用结束
+                duration = time.time() - start_tool
+                audit_logger.update_tool_call(
+                    call_id=db_call_id,
+                    status=result.status.value, # ToolStatus.SUCCESS -> "success"
+                    duration_sec=duration,
+                    stdout_summary=result.output,
+                    error=result.error
+                )
                 
                 # 正确处理 ToolResult - 同时考虑 status、output 和 error
                 if hasattr(result, 'status'):
@@ -442,6 +517,9 @@ async def _agent_loop(
             "usage": total_usage,
             "stop_reason": "stop",
         }
+    
+    if accumulated_reasoning:
+        final_response["reasoning"] = "\n---\n".join(accumulated_reasoning)
     
     return final_response
 

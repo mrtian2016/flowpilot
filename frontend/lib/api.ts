@@ -48,6 +48,25 @@ export interface AuditSession {
     total_duration_sec: number | null;
 }
 
+export interface AuditToolCall {
+    call_id: string;
+    tool_name: string;
+    tool_args: Record<string, any>;
+    status: string;
+    duration_sec: number | null;
+    stdout_summary: string | null;
+    error?: string | null;
+}
+
+export interface AuditSessionDetail extends AuditSession {
+    hostname: string | null;
+    final_output: string | null;
+    agent_reasoning: string | null;
+    token_usage: Record<string, any> | null;
+    cost_usd: number | null;
+    tool_calls: AuditToolCall[];
+}
+
 export interface Stats {
     hosts_count: number;
     jumps_count: number;
@@ -57,10 +76,11 @@ export interface Stats {
 }
 
 // Hosts
-export async function getHosts(env?: string, group?: string): Promise<Host[]> {
+export async function getHosts(env?: string, group?: string, q?: string): Promise<Host[]> {
     const params = new URLSearchParams();
     if (env) params.set("env", env);
     if (group) params.set("group", group);
+    if (q) params.set("q", q);
     const res = await fetch(`${API_BASE}/api/hosts?${params}`);
     if (!res.ok) throw new Error("Failed to fetch hosts");
     return res.json();
@@ -131,6 +151,63 @@ export async function deleteService(name: string): Promise<void> {
     if (!res.ok) throw new Error("Failed to delete service");
 }
 
+// Host Services (主机服务)
+export interface HostService {
+    id: number;
+    host_id: number;
+    host_name: string;
+    name: string;
+    service_name: string;
+    service_type: string;
+    description: string;
+}
+
+export async function getHostServices(hostName: string): Promise<HostService[]> {
+    const res = await fetch(`${API_BASE}/api/hosts/${hostName}/services`);
+    if (!res.ok) throw new Error("Failed to fetch host services");
+    return res.json();
+}
+
+export async function getAllHostServices(): Promise<HostService[]> {
+    const res = await fetch(`${API_BASE}/api/host-services`);
+    if (!res.ok) throw new Error("Failed to fetch all host services");
+    return res.json();
+}
+
+export async function createHostService(
+    hostName: string,
+    data: { name: string; service_name: string; service_type: string; description?: string }
+): Promise<HostService> {
+    const res = await fetch(`${API_BASE}/api/hosts/${hostName}/services`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to create host service");
+    return res.json();
+}
+
+export async function updateHostService(
+    hostName: string,
+    serviceId: number,
+    data: Partial<{ name: string; service_name: string; service_type: string; description: string }>
+): Promise<HostService> {
+    const res = await fetch(`${API_BASE}/api/hosts/${hostName}/services/${serviceId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to update host service");
+    return res.json();
+}
+
+export async function deleteHostService(hostName: string, serviceId: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/hosts/${hostName}/services/${serviceId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete host service");
+}
+
 // Policies
 export async function getPolicies(): Promise<Policy[]> {
     const res = await fetch(`${API_BASE}/api/policies`);
@@ -149,6 +226,12 @@ export async function deletePolicy(name: string): Promise<void> {
 export async function getAuditSessions(limit = 20): Promise<AuditSession[]> {
     const res = await fetch(`${API_BASE}/api/audit/sessions?limit=${limit}`);
     if (!res.ok) throw new Error("Failed to fetch audit sessions");
+    return res.json();
+}
+
+export async function getAuditSessionDetail(sessionId: string): Promise<AuditSessionDetail> {
+    const res = await fetch(`${API_BASE}/api/audit/sessions/${sessionId}`);
+    if (!res.ok) throw new Error("Failed to fetch audit session detail");
     return res.json();
 }
 

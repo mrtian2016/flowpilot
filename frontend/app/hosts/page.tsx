@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { getHosts, deleteHost, createHost, Host } from "@/lib/api";
+import HostServiceModal from "@/components/HostServiceModal";
+import { Plus, RefreshCcw, Search } from "lucide-react";
 
 interface HostFormData {
     name: string;
@@ -33,10 +35,12 @@ export default function HostsPage() {
     const [hosts, setHosts] = useState<Host[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState({ env: "", group: "" });
+    const [searchQuery, setSearchQuery] = useState("");
     const [showModal, setShowModal] = useState(false);
     const [editingHost, setEditingHost] = useState<Host | null>(null);
     const [formData, setFormData] = useState<HostFormData>(defaultFormData);
     const [saving, setSaving] = useState(false);
+    const [serviceModalHost, setServiceModalHost] = useState<Host | null>(null);
 
     useEffect(() => {
         fetchHosts();
@@ -45,7 +49,7 @@ export default function HostsPage() {
     async function fetchHosts() {
         setLoading(true);
         try {
-            const data = await getHosts(filter.env || undefined, filter.group || undefined);
+            const data = await getHosts(filter.env || undefined, filter.group || undefined, searchQuery || undefined);
             setHosts(data);
         } catch (error) {
             console.error("Failed to fetch hosts:", error);
@@ -130,45 +134,62 @@ export default function HostsPage() {
     const groups = [...new Set(hosts.map((h) => h.group))];
 
     return (
-        <div className="p-8">
+        <div className="p-4 md:p-8">
             {/* Header */}
-            <div className="flex justify-between items-center mb-8">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold">主机管理</h1>
                     <p className="text-gray-400 mt-1">管理 SSH 主机配置</p>
                 </div>
-                <button onClick={openAddModal} className="btn btn-primary">
-                    <span>+</span> 添加主机
+                <button onClick={openAddModal} className="btn btn-primary w-full md:w-auto flex items-center gap-2 justify-center">
+                    <Plus size={18} />
+                    添加主机
                 </button>
             </div>
 
-            {/* Filters */}
-            <div className="flex gap-4 mb-6">
-                <select
-                    value={filter.env}
-                    onChange={(e) => setFilter({ ...filter, env: e.target.value })}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                >
-                    <option value="">所有环境</option>
-                    <option value="dev">开发环境</option>
-                    <option value="staging">预发布</option>
-                    <option value="prod">生产环境</option>
-                </select>
-                <select
-                    value={filter.group}
-                    onChange={(e) => setFilter({ ...filter, group: e.target.value })}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                >
-                    <option value="">所有分组</option>
-                    {groups.map((g) => (
-                        <option key={g} value={g}>
-                            {g}
-                        </option>
-                    ))}
-                </select>
-                <button onClick={fetchHosts} className="btn btn-ghost">
-                    🔄 刷新
-                </button>
+            {/* Filters & Search */}
+            <div className="flex flex-col md:flex-row gap-4 mb-6">
+                {/* Search Input */}
+                <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder="搜索主机名、IP、描述..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && fetchHosts()}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-white focus:outline-none focus:border-blue-500 placeholder-gray-500"
+                    />
+                </div>
+
+                <div className="flex gap-4 overflow-x-auto pb-1 md:pb-0">
+                    <select
+                        value={filter.env}
+                        onChange={(e) => setFilter({ ...filter, env: e.target.value })}
+                        className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="">所有环境</option>
+                        <option value="dev">开发环境</option>
+                        <option value="staging">预发布</option>
+                        <option value="prod">生产环境</option>
+                    </select>
+                    <select
+                        value={filter.group}
+                        onChange={(e) => setFilter({ ...filter, group: e.target.value })}
+                        className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="">所有分组</option>
+                        {groups.map((g) => (
+                            <option key={g} value={g}>
+                                {g}
+                            </option>
+                        ))}
+                    </select>
+                    <button onClick={fetchHosts} className="btn btn-ghost w-full md:w-auto flex items-center gap-2 justify-center whitespace-nowrap">
+                        <RefreshCcw size={18} />
+                        刷新
+                    </button>
+                </div>
             </div>
 
             {/* Table */}
@@ -184,32 +205,44 @@ export default function HostsPage() {
                         <thead>
                             <tr>
                                 <th>名称</th>
-                                <th>地址</th>
-                                <th>用户</th>
+                                <th className="hidden md:table-cell">地址</th>
+                                <th className="hidden lg:table-cell">用户</th>
                                 <th>环境</th>
-                                <th>分组</th>
-                                <th>备注</th>
+                                <th className="hidden xl:table-cell">分组</th>
+                                <th className="hidden lg:table-cell">备注</th>
                                 <th className="text-right">操作</th>
                             </tr>
                         </thead>
                         <tbody>
                             {hosts.map((host) => (
                                 <tr key={host.id}>
-                                    <td className="font-medium">{host.name}</td>
-                                    <td className="text-gray-400">
+                                    <td className="font-medium">
+                                        {host.name}
+                                        {/* Mobile only info */}
+                                        <div className="md:hidden text-xs text-gray-500 mt-1">
+                                            {host.addr}:{host.port}
+                                        </div>
+                                    </td>
+                                    <td className="text-gray-400 hidden md:table-cell">
                                         {host.addr}:{host.port}
                                     </td>
-                                    <td className="text-gray-400">{host.user}</td>
+                                    <td className="text-gray-400 hidden lg:table-cell">{host.user}</td>
                                     <td>
                                         <span className={`badge ${envColors[host.env] || ""}`}>
                                             {host.env}
                                         </span>
                                     </td>
-                                    <td className="text-gray-400">{host.group}</td>
-                                    <td className="text-gray-400 max-w-[200px] truncate">
+                                    <td className="text-gray-400 hidden xl:table-cell">{host.group}</td>
+                                    <td className="text-gray-400 max-w-[200px] truncate hidden lg:table-cell">
                                         {host.description}
                                     </td>
                                     <td className="text-right">
+                                        <button
+                                            onClick={() => setServiceModalHost(host)}
+                                            className="btn btn-ghost text-sm mr-2 text-blue-400 hover:text-blue-300"
+                                        >
+                                            服务
+                                        </button>
                                         <button
                                             onClick={() => openEditModal(host)}
                                             className="btn btn-ghost text-sm mr-2"
@@ -234,7 +267,7 @@ export default function HostsPage() {
 
             {/* Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                     <div className="bg-gray-900 rounded-xl border border-gray-800 w-full max-w-lg max-h-[90vh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-800">
                             <h2 className="text-xl font-semibold">
@@ -411,6 +444,15 @@ export default function HostsPage() {
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* Host Service Modal */}
+            {serviceModalHost && (
+                <HostServiceModal
+                    hostName={serviceModalHost.name}
+                    hostDescription={serviceModalHost.description}
+                    onClose={() => setServiceModalHost(null)}
+                />
             )}
         </div>
     );

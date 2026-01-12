@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { getStats, getAuditSessions, Stats, AuditSession } from "@/lib/api";
 import Link from "next/link";
+import { Monitor, Network, Settings, Shield, Bot } from "lucide-react";
 
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -36,14 +37,14 @@ export default function Dashboard() {
   }
 
   const statCards = [
-    { label: "主机数量", value: stats?.hosts_count || 0, icon: "🖥️", color: "from-blue-500 to-blue-600", href: "/hosts" },
-    { label: "跳板机", value: stats?.jumps_count || 0, icon: "🔗", color: "from-purple-500 to-purple-600", href: "/jumps" },
-    { label: "服务配置", value: stats?.services_count || 0, icon: "⚙️", color: "from-green-500 to-green-600", href: "/services" },
-    { label: "策略规则", value: stats?.policies_count || 0, icon: "🛡️", color: "from-orange-500 to-orange-600", href: "/policies" },
+    { label: "主机数量", value: stats?.hosts_count || 0, icon: Monitor, color: "from-blue-500 to-blue-600", href: "/hosts" },
+    { label: "跳板机", value: stats?.jumps_count || 0, icon: Network, color: "from-purple-500 to-purple-600", href: "/jumps" },
+    { label: "服务配置", value: stats?.services_count || 0, icon: Settings, color: "from-green-500 to-green-600", href: "/services" },
+    { label: "策略规则", value: stats?.policies_count || 0, icon: Shield, color: "from-orange-500 to-orange-600", href: "/policies" },
   ];
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold">仪表盘</h1>
@@ -59,7 +60,9 @@ export default function Dashboard() {
             className="card-hover bg-gray-900 rounded-xl p-6 border border-gray-800"
           >
             <div className="flex items-center justify-between mb-4">
-              <span className="text-3xl">{card.icon}</span>
+              <span className="text-3xl text-gray-500">
+                <card.icon size={32} />
+              </span>
               <div className={`px-3 py-1 rounded-full bg-gradient-to-r ${card.color} text-white text-sm font-medium`}>
                 {card.value}
               </div>
@@ -77,7 +80,7 @@ export default function Dashboard() {
           className="card-hover bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl p-6"
         >
           <div className="flex items-center gap-4">
-            <span className="text-5xl">🤖</span>
+            <Bot size={48} className="text-white opacity-90" />
             <div>
               <h3 className="text-xl font-bold text-white">AI 对话</h3>
               <p className="text-blue-100 mt-1">

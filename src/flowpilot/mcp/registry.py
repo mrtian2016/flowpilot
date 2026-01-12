@@ -145,6 +145,7 @@ class MCPRegistry:
         )
         from flowpilot.tools.git import GitDiffTool, GitLogTool, GitStatusTool
         from flowpilot.tools.logs import DockerLogsTool, LogSearchTool, LogTailTool
+        from flowpilot.tools.service import ServiceControlTool, ServiceListTool
         from flowpilot.tools.ssh import SSHExecBatchTool, SSHExecTool
 
         # SSH Tools
@@ -167,6 +168,10 @@ class MCPRegistry:
         self._tool_registry.register(HostListTool())
         self._tool_registry.register(HostRemoveTool())
         self._tool_registry.register(HostUpdateTool())
+
+        # Service Tools
+        self._tool_registry.register(ServiceListTool())
+        self._tool_registry.register(ServiceControlTool(ssh_tool))
 
     def get_tool(self, name: str) -> MCPTool | None:
         """获取 Tool."""

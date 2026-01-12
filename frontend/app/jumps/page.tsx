@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getJumps, deleteJump, Jump } from "@/lib/api";
+import { Plus } from "lucide-react";
 
 export default function JumpsPage() {
     const [jumps, setJumps] = useState<Jump[]>([]);
@@ -34,14 +35,15 @@ export default function JumpsPage() {
     }
 
     return (
-        <div className="p-8">
-            <div className="flex justify-between items-center mb-8">
+        <div className="p-4 md:p-8">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold">跳板机管理</h1>
                     <p className="text-gray-400 mt-1">管理 SSH 跳板机配置</p>
                 </div>
-                <button className="btn btn-primary">
-                    <span>+</span> 添加跳板机
+                <button className="btn btn-primary w-full md:w-auto flex items-center gap-2 justify-center">
+                    <Plus size={18} />
+                    添加跳板机
                 </button>
             </div>
 
@@ -60,18 +62,23 @@ export default function JumpsPage() {
                             <tr>
                                 <th>名称</th>
                                 <th>地址</th>
-                                <th>用户</th>
-                                <th>端口</th>
+                                <th className="hidden md:table-cell">用户</th>
+                                <th className="hidden md:table-cell">端口</th>
                                 <th className="text-right">操作</th>
                             </tr>
                         </thead>
                         <tbody>
                             {jumps.map((jump) => (
                                 <tr key={jump.id}>
-                                    <td className="font-medium">{jump.name}</td>
-                                    <td className="text-gray-400">{jump.addr}</td>
-                                    <td className="text-gray-400">{jump.user}</td>
-                                    <td className="text-gray-400">{jump.port}</td>
+                                    <td className="font-medium">
+                                        {jump.name}
+                                        <div className="md:hidden text-xs text-gray-500 mt-1">
+                                            {jump.user}@{jump.addr}:{jump.port}
+                                        </div>
+                                    </td>
+                                    <td className="text-gray-400 hidden md:table-cell">{jump.addr}</td>
+                                    <td className="text-gray-400 hidden md:table-cell">{jump.user}</td>
+                                    <td className="text-gray-400 hidden md:table-cell">{jump.port}</td>
                                     <td className="text-right">
                                         <button className="btn btn-ghost text-sm mr-2">编辑</button>
                                         <button

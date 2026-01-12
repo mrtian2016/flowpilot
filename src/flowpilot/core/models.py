@@ -87,6 +87,7 @@ class Host(Base):
     group: Mapped[str] = mapped_column(String, default="default")
     
     tags: Mapped[List["Tag"]] = relationship(secondary=host_tags, back_populates="hosts")
+    host_services: Mapped[List["HostService"]] = relationship(back_populates="host", cascade="all, delete-orphan")
 
 
 class JumpConfig(Base):
@@ -99,6 +100,23 @@ class JumpConfig(Base):
     addr: Mapped[str] = mapped_column(String)
     user: Mapped[str] = mapped_column(String)
     port: Mapped[int] = mapped_column(Integer, default=22)
+
+
+class HostService(Base):
+    """主机服务配置 - 每台主机上运行的服务."""
+    __tablename__ = "host_services"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    host_id: Mapped[int] = mapped_column(ForeignKey("hosts.id"))
+    
+    # 服务基本信息
+    name: Mapped[str] = mapped_column(String)  # 用户友好名称，如 "后端服务"
+    service_name: Mapped[str] = mapped_column(String)  # systemd 服务名，如 "ir_web.service"
+    service_type: Mapped[str] = mapped_column(String, default="systemd")  # 类型: systemd, docker, pm2
+    description: Mapped[str] = mapped_column(String, default="")
+    
+    # 关联主机
+    host: Mapped["Host"] = relationship(back_populates="host_services")
 
 
 class Service(Base):

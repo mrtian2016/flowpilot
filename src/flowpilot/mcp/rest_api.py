@@ -9,10 +9,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
+import uuid
+import time
+import os
+from flowpilot.audit.logger import AuditLogger
 
 from flowpilot.core.db import get_db as db_get_db
 from flowpilot.core.models import (
     Host,
+    HostService,
     JumpConfig,
     Service,
     PolicyRule,
@@ -99,6 +105,36 @@ class JumpResponse(BaseModel):
         from_attributes = True
 
 
+class HostServiceCreate(BaseModel):
+    """创建主机服务请求."""
+    name: str = Field(..., description="服务名称（用户友好名，如'后端服务'）")
+    service_name: str = Field(..., description="服务标识（如 ir_web.service）")
+    service_type: str = Field("systemd", description="服务类型: systemd, docker, pm2")
+    description: str = Field("", description="服务描述")
+
+
+class HostServiceUpdate(BaseModel):
+    """更新主机服务请求."""
+    name: str | None = None
+    service_name: str | None = None
+    service_type: str | None = None
+    description: str | None = None
+
+
+class HostServiceResponse(BaseModel):
+    """主机服务响应."""
+    id: int
+    host_id: int
+    host_name: str  # 额外返回主机名
+    name: str
+    service_name: str
+    service_type: str
+    description: str
+
+    class Config:
+        from_attributes = True
+
+
 class ServiceCreate(BaseModel):
     """创建服务请求."""
     name: str
@@ -163,6 +199,7 @@ rest_router = APIRouter(prefix="/api", tags=["REST API"])
 async def list_hosts(
     env: str | None = None,
     group: str | None = None,
+    q: str | None = None,
     db: Session = Depends(get_db),
 ) -> list[HostResponse]:
     """获取主机列表."""
@@ -171,6 +208,15 @@ async def list_hosts(
         query = query.filter(Host.env == env)
     if group:
         query = query.filter(Host.group == group)
+    if q:
+        search = f"%{q}%"
+        query = query.filter(
+            or_(
+                Host.name.ilike(search),
+                Host.addr.ilike(search),
+                Host.description.ilike(search),
+            )
+        )
     
     hosts = query.all()
     return [
@@ -244,6 +290,13 @@ async def create_host(data: HostCreate, db: Session = Depends(get_db)) -> HostRe
     db.add(host)
     db.commit()
     db.refresh(host)
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 创建主机 {data.name} ({data.addr})",
+        input_mode="api"
+    )
     
     return HostResponse(
         id=host.id,
@@ -298,6 +351,13 @@ async def update_host(
     
     db.commit()
     db.refresh(host)
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 更新主机 {name}",
+        input_mode="api"
+    )
     
     return HostResponse(
         id=host.id,
@@ -323,7 +383,196 @@ async def delete_host(name: str, db: Session = Depends(get_db)) -> dict[str, str
     
     db.delete(host)
     db.commit()
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 删除主机 {name}",
+        input_mode="api"
+    )
     return {"message": f"已删除主机 '{name}'"}
+
+
+# ========== Host Services (主机服务) ==========
+
+
+@rest_router.get("/host-services")
+async def list_all_host_services(
+    host_name: str | None = None,
+    service_type: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[HostServiceResponse]:
+    """获取所有主机服务列表（支持过滤）."""
+    query = db.query(HostService).join(Host)
+    if host_name:
+        query = query.filter(Host.name == host_name)
+    if service_type:
+        query = query.filter(HostService.service_type == service_type)
+    
+    services = query.all()
+    return [
+        HostServiceResponse(
+            id=s.id,
+            host_id=s.host_id,
+            host_name=s.host.name,
+            name=s.name,
+            service_name=s.service_name,
+            service_type=s.service_type,
+            description=s.description,
+        )
+        for s in services
+    ]
+
+
+@rest_router.get("/hosts/{host_name}/services")
+async def list_host_services(
+    host_name: str, db: Session = Depends(get_db)
+) -> list[HostServiceResponse]:
+    """获取指定主机的服务列表."""
+    host = db.query(Host).filter(Host.name == host_name).first()
+    if not host:
+        raise HTTPException(status_code=404, detail=f"主机 '{host_name}' 不存在")
+    
+    return [
+        HostServiceResponse(
+            id=s.id,
+            host_id=s.host_id,
+            host_name=host.name,
+            name=s.name,
+            service_name=s.service_name,
+            service_type=s.service_type,
+            description=s.description,
+        )
+        for s in host.host_services
+    ]
+
+
+@rest_router.post("/hosts/{host_name}/services")
+async def create_host_service(
+    host_name: str, data: HostServiceCreate, db: Session = Depends(get_db)
+) -> HostServiceResponse:
+    """为主机添加服务."""
+    host = db.query(Host).filter(Host.name == host_name).first()
+    if not host:
+        raise HTTPException(status_code=404, detail=f"主机 '{host_name}' 不存在")
+    
+    # 检查是否已存在同名服务
+    existing = db.query(HostService).filter(
+        HostService.host_id == host.id,
+        HostService.name == data.name
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"主机 '{host_name}' 已存在名为 '{data.name}' 的服务"
+        )
+    
+    service = HostService(
+        host_id=host.id,
+        name=data.name,
+        service_name=data.service_name,
+        service_type=data.service_type,
+        description=data.description,
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 创建主机服务 {host_name} -> {data.name} ({data.service_name})",
+        input_mode="api"
+    )
+    
+    return HostServiceResponse(
+        id=service.id,
+        host_id=service.host_id,
+        host_name=host.name,
+        name=service.name,
+        service_name=service.service_name,
+        service_type=service.service_type,
+        description=service.description,
+    )
+
+
+@rest_router.put("/hosts/{host_name}/services/{service_id}")
+async def update_host_service(
+    host_name: str,
+    service_id: int,
+    data: HostServiceUpdate,
+    db: Session = Depends(get_db),
+) -> HostServiceResponse:
+    """更新主机服务."""
+    host = db.query(Host).filter(Host.name == host_name).first()
+    if not host:
+        raise HTTPException(status_code=404, detail=f"主机 '{host_name}' 不存在")
+    
+    service = db.query(HostService).filter(
+        HostService.id == service_id,
+        HostService.host_id == host.id
+    ).first()
+    if not service:
+        raise HTTPException(status_code=404, detail=f"服务 ID {service_id} 不存在")
+    
+    if data.name is not None:
+        service.name = data.name
+    if data.service_name is not None:
+        service.service_name = data.service_name
+    if data.service_type is not None:
+        service.service_type = data.service_type
+    if data.description is not None:
+        service.description = data.description
+    
+    db.commit()
+    db.refresh(service)
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 更新主机服务 {host_name} -> {service.name}",
+        input_mode="api"
+    )
+    
+    return HostServiceResponse(
+        id=service.id,
+        host_id=service.host_id,
+        host_name=host.name,
+        name=service.name,
+        service_name=service.service_name,
+        service_type=service.service_type,
+        description=service.description,
+    )
+
+
+@rest_router.delete("/hosts/{host_name}/services/{service_id}")
+async def delete_host_service(
+    host_name: str, service_id: int, db: Session = Depends(get_db)
+) -> dict[str, str]:
+    """删除主机服务."""
+    host = db.query(Host).filter(Host.name == host_name).first()
+    if not host:
+        raise HTTPException(status_code=404, detail=f"主机 '{host_name}' 不存在")
+    
+    service = db.query(HostService).filter(
+        HostService.id == service_id,
+        HostService.host_id == host.id
+    ).first()
+    if not service:
+        raise HTTPException(status_code=404, detail=f"服务 ID {service_id} 不存在")
+    
+    service_name = service.name
+    db.delete(service)
+    db.commit()
+
+    # 审计
+    AuditLogger().create_session(
+        session_id=f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+        user_input=f"API: 删除主机服务 {host_name} -> {service_name}",
+        input_mode="api"
+    )
+
+    return {"message": f"已删除主机 '{host_name}' 的服务 '{service_name}'"}
 
 
 # ========== Jumps ==========

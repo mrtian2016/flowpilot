@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage, sendChatMessage } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
+import { Bot, Trash2, MessageSquare, AlertCircle } from "lucide-react";
 
 interface Message {
     role: "user" | "assistant";
@@ -55,7 +56,7 @@ export default function ChatPage() {
             console.error("Failed to send message:", error);
             const errorMessage: Message = {
                 role: "assistant",
-                content: "❌ 发送失败，请检查后端服务是否正常运行。",
+                content: "Error: 发送失败，请检查后端服务是否正常运行。",
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorMessage]);
@@ -78,15 +79,16 @@ export default function ChatPage() {
     return (
         <div className="flex flex-col h-screen">
             {/* Header */}
-            <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900 p-4">
-                <div className="flex items-center justify-between">
+            <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900 p-3 md:p-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-0">
                     <div>
                         <h1 className="text-xl font-bold flex items-center gap-2">
-                            <span className="text-2xl">🤖</span> AI 对话
+                            <Bot className="w-8 h-8 text-blue-500" />
+                            AI 对话
                         </h1>
-                        <p className="text-gray-500 text-sm">使用自然语言管理服务器</p>
+                        <p className="text-gray-500 text-sm hidden md:block">使用自然语言管理服务器</p>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 md:gap-4 self-end md:self-auto">
                         <select
                             value={model}
                             onChange={(e) => setModel(e.target.value)}
@@ -96,8 +98,9 @@ export default function ChatPage() {
                             <option value="claude">Claude</option>
                             <option value="zhipu">智谱</option>
                         </select>
-                        <button onClick={clearChat} className="btn btn-ghost text-sm">
-                            🗑️ 清空
+                        <button onClick={clearChat} className="btn btn-ghost text-sm flex items-center gap-2">
+                            <Trash2 size={16} />
+                            清空
                         </button>
                     </div>
                 </div>
@@ -107,7 +110,7 @@ export default function ChatPage() {
             <div className="flex-1 overflow-auto p-4 space-y-4">
                 {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <span className="text-6xl mb-4">💬</span>
+                        <MessageSquare size={64} className="mb-4 opacity-50" />
                         <p className="text-lg">开始对话</p>
                         <p className="text-sm mt-2">试试问：&quot;查看 ubuntu 服务器运行时间&quot;</p>
                     </div>
@@ -119,8 +122,8 @@ export default function ChatPage() {
                         >
                             <div
                                 className={`max-w-[80%] rounded-2xl px-4 py-3 ${message.role === "user"
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-gray-800 text-gray-100"
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-800 text-gray-100"
                                     }`}
                             >
                                 {message.role === "assistant" ? (
@@ -170,8 +173,8 @@ export default function ChatPage() {
                         onClick={handleSend}
                         disabled={loading || !input.trim()}
                         className={`btn px-6 ${loading || !input.trim()
-                                ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-                                : "btn-primary"
+                            ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                            : "btn-primary"
                             }`}
                     >
                         发送

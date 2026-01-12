@@ -78,6 +78,17 @@ SYSTEM_PROMPT = """你是 FlowPilot，一个专业的服务器运维 AI 助手�
 - `host_remove`: 移除主机
   - alias: 主机别名
 
+### 服务管理
+- `service_list`: 列出主机上配置的服务
+  - host: 主机别名或描述关键词（可选，如 "东勤盘点"）
+  - service: 服务名称关键词（可选）
+
+- `service_control`: 控制主机上的服务（启动/停止/重启/状态）
+  - host: 主机别名或描述（如 "东勤盘点"、"dq-robot-1"）
+  - service: 服务名称或描述（如 "后端服务"、"ir_web"）
+  - action: 操作类型（start/stop/restart/status）
+  - 支持 systemd、docker、pm2 三种服务类型
+
 ## 常见运维场景命令参考
 
 ### 系统信息

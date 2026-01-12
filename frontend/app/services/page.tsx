@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getServices, deleteService, Service } from "@/lib/api";
+import { Plus, Settings } from "lucide-react";
 
 export default function ServicesPage() {
     const [services, setServices] = useState<Service[]>([]);
@@ -34,14 +35,15 @@ export default function ServicesPage() {
     }
 
     return (
-        <div className="p-8">
-            <div className="flex justify-between items-center mb-8">
+        <div className="p-4 md:p-8">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold">服务配置</h1>
                     <p className="text-gray-400 mt-1">管理应用服务配置</p>
                 </div>
-                <button className="btn btn-primary">
-                    <span>+</span> 添加服务
+                <button className="btn btn-primary w-full md:w-auto flex items-center gap-2 justify-center">
+                    <Plus size={18} />
+                    添加服务
                 </button>
             </div>
 
@@ -67,7 +69,7 @@ export default function ServicesPage() {
                                         {service.description || "暂无描述"}
                                     </p>
                                 </div>
-                                <span className="text-2xl">⚙️</span>
+                                <Settings className="text-gray-600" size={24} />
                             </div>
 
                             <div className="text-sm text-gray-500 mb-4">
@@ -87,6 +89,6 @@ export default function ServicesPage() {
                     ))
                 )}
             </div>
-        </div>
+        </div >
     );
 }
