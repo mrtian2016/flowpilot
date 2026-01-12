@@ -5,20 +5,17 @@ import socket
 from datetime import datetime
 from typing import Any
 
+from ..core.db import SessionLocal
+from ..core.models import AuditSession, AuditToolCall
 from ..utils.sensitive import mask_sensitive
-from .models import AuditSession, AuditToolCall, init_database
 
 
 class AuditLogger:
     """审计日志记录器."""
 
-    def __init__(self, db_path: str = "~/.flowpilot/audit.db") -> None:
-        """初始化审计日志记录器.
-
-        Args:
-            db_path: 数据库路径
-        """
-        self.engine, self.Session = init_database(db_path)
+    def __init__(self) -> None:
+        """初始化审计日志记录器."""
+        pass
 
     def create_session(
         self,
@@ -33,8 +30,7 @@ class AuditLogger:
             user_input: 用户输入
             input_mode: 输入模式
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             record = AuditSession(
                 session_id=session_id,
                 timestamp=datetime.utcnow(),
@@ -46,8 +42,6 @@ class AuditLogger:
             )
             session.add(record)
             session.commit()
-        finally:
-            session.close()
 
     def update_session(
         self,
@@ -60,16 +54,13 @@ class AuditLogger:
             session_id: 会话 ID
             **kwargs: 要更新的字段
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             record = session.query(AuditSession).filter_by(session_id=session_id).first()
             if record:
                 for key, value in kwargs.items():
                     if hasattr(record, key):
                         setattr(record, key, value)
                 session.commit()
-        finally:
-            session.close()
 
     def add_tool_call(
         self,
@@ -88,8 +79,7 @@ class AuditLogger:
             tool_args: Tool 参数
             status: 状态
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             record = AuditToolCall(
                 call_id=call_id,
                 session_id=session_id,
@@ -99,8 +89,6 @@ class AuditLogger:
             )
             session.add(record)
             session.commit()
-        finally:
-            session.close()
 
     def update_tool_call(
         self,
@@ -113,8 +101,7 @@ class AuditLogger:
             call_id: 调用 ID
             **kwargs: 要更新的字段（会自动脱敏 stdout_summary）
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             record = session.query(AuditToolCall).filter_by(call_id=call_id).first()
             if record:
                 for key, value in kwargs.items():
@@ -124,8 +111,6 @@ class AuditLogger:
                     if hasattr(record, key):
                         setattr(record, key, value)
                 session.commit()
-        finally:
-            session.close()
 
     def get_recent_sessions(self, limit: int = 10, env: str | None = None) -> list[dict[str, Any]]:
         """获取最近的会话记录.
@@ -137,8 +122,7 @@ class AuditLogger:
         Returns:
             会话记录列表
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             query = session.query(AuditSession).order_by(AuditSession.timestamp.desc())
 
             # TODO: 添加环境过滤（需要在 metadata 中存储 env）
@@ -156,8 +140,6 @@ class AuditLogger:
                 }
                 for r in records
             ]
-        finally:
-            session.close()
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         """获取单个会话记录.
@@ -168,8 +150,7 @@ class AuditLogger:
         Returns:
             会话记录或 None
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             record = session.query(AuditSession).filter_by(session_id=session_id).first()
             if not record:
                 return None
@@ -182,8 +163,6 @@ class AuditLogger:
                 "status": record.status,
                 "duration_sec": record.total_duration_sec,
             }
-        finally:
-            session.close()
 
     def get_session_details(self, session_id: str) -> dict[str, Any] | None:
 
@@ -195,8 +174,7 @@ class AuditLogger:
         Returns:
             会话详情，或 None
         """
-        session = self.Session()
-        try:
+        with SessionLocal() as session:
             # 查询会话
             sess_record = session.query(AuditSession).filter_by(session_id=session_id).first()
             if not sess_record:
@@ -227,5 +205,3 @@ class AuditLogger:
                     for tc in tool_calls
                 ],
             }
-        finally:
-            session.close()

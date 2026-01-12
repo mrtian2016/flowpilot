@@ -6,7 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import paramiko
+from paramiko.ssh_exception import (
+    AuthenticationException,
+    NoValidConnectionsError,
+    SSHException,
+)
 
+from ..config.loader import load_config
 from ..config.schema import FlowPilotConfig, HostConfig
 from ..policy.action_classifier import classify_command
 from ..policy.engine import PolicyDecision, PolicyEffect, PolicyEngine
@@ -16,14 +22,12 @@ from .base import MCPTool, ToolResult, ToolStatus
 class SSHExecTool(MCPTool):
     """SSH 命令执行 Tool."""
 
-    def __init__(self, config: FlowPilotConfig, policy_engine: PolicyEngine) -> None:
+    def __init__(self, policy_engine: PolicyEngine) -> None:
         """初始化 SSH Tool.
 
         Args:
-            config: FlowPilot 配置
             policy_engine: 策略引擎
         """
-        self.config = config
         self.policy_engine = policy_engine
 
     @property
@@ -81,6 +85,9 @@ class SSHExecTool(MCPTool):
         Returns:
             执行结果
         """
+        # 动态加载配置
+        config = load_config()
+
         host_alias = kwargs["host"]
         command = kwargs["command"]
         env = kwargs.get("env")
@@ -88,7 +95,7 @@ class SSHExecTool(MCPTool):
         confirm_token = kwargs.get("_confirm_token")
 
         # 1. 解析主机配置
-        host_config = self._resolve_host(host_alias)
+        host_config = self._resolve_host(host_alias, config)
         if not host_config:
             return ToolResult(
                 status=ToolStatus.ERROR,
@@ -145,6 +152,7 @@ class SSHExecTool(MCPTool):
             exit_code, stdout, stderr = await self._execute_ssh(
                 host_config=host_config,
                 command=command,
+                config=config,
                 timeout=timeout,
             )
             duration = time.time() - start_time
@@ -173,27 +181,65 @@ class SSHExecTool(MCPTool):
                     duration_sec=duration,
                 )
 
+        except NoValidConnectionsError as e:
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 连接失败: 无法连接到主机 {host_alias}。可能原因：1) 机器未开机 2) 网络不通 3) SSH服务未运行。原始错误: {str(e)}",
+            )
+        except AuthenticationException as e:
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 认证失败: 主机 {host_alias} 拒绝了认证。可能原因：1) SSH密钥不正确 2) 用户名错误。原始错误: {str(e)}",
+            )
+        except SSHException as e:
+            error_msg = str(e)
+            if "banner" in error_msg.lower() or "protocol" in error_msg.lower():
+                return ToolResult(
+                    status=ToolStatus.ERROR,
+                    error=f"⚠️ SSH 连接失败: 主机 {host_alias} 无法建立SSH连接（无法读取SSH协议banner）。可能原因：1) 机器未开机或正在启动中 2) SSH服务未运行 3) 防火墙阻止了连接 4) 网络连接中断。原始错误: {error_msg}",
+                )
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 连接异常: 主机 {host_alias}。原始错误: {error_msg}",
+            )
+        except TimeoutError:
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 连接超时: 主机 {host_alias} 连接超时。可能原因：1) 机器未开机 2) 网络不通 3) 防火墙阻止连接。",
+            )
+        except ConnectionRefusedError:
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 连接被拒绝: 主机 {host_alias} 拒绝了连接。可能原因：1) SSH服务未运行 2) 端口配置错误。",
+            )
+        except EOFError:
+            return ToolResult(
+                status=ToolStatus.ERROR,
+                error=f"⚠️ SSH 连接中断: 主机 {host_alias} 连接意外关闭。可能原因：1) 机器未开机 2) SSH服务崩溃 3) 网络中断。",
+            )
         except Exception as e:
             return ToolResult(
                 status=ToolStatus.ERROR,
-                error=f"SSH 执行失败: {str(e)}",
+                error=f"⚠️ SSH 执行失败: 主机 {host_alias}。错误类型: {type(e).__name__}，详情: {str(e)}",
             )
 
-    def _resolve_host(self, host_alias: str) -> HostConfig | None:
+    def _resolve_host(self, host_alias: str, config: FlowPilotConfig) -> HostConfig | None:
         """解析主机配置.
 
         Args:
             host_alias: 主机别名
+            config: 配置对象
 
         Returns:
             主机配置，或 None
         """
-        return self.config.hosts.get(host_alias)
+        return config.hosts.get(host_alias)
 
     async def _execute_ssh(
         self,
         host_config: HostConfig,
         command: str,
+        config: FlowPilotConfig,
         timeout: int = 30,
     ) -> tuple[int, str, str]:
         """执行 SSH 命令（支持跳板机）.
@@ -201,6 +247,7 @@ class SSHExecTool(MCPTool):
         Args:
             host_config: 主机配置
             command: 命令
+            config: 配置对象
             timeout: 超时时间
 
         Returns:
@@ -214,6 +261,7 @@ class SSHExecTool(MCPTool):
                 self._ssh_execute_sync,
                 host_config,
                 command,
+                config,
                 timeout,
             )
 
@@ -221,6 +269,7 @@ class SSHExecTool(MCPTool):
         self,
         host_config: HostConfig,
         command: str,
+        config: FlowPilotConfig,
         timeout: int,
     ) -> tuple[int, str, str]:
         """同步执行 SSH 命令.
@@ -228,6 +277,7 @@ class SSHExecTool(MCPTool):
         Args:
             host_config: 主机配置
             command: 命令
+            config: 配置对象
             timeout: 超时
 
         Returns:
@@ -240,7 +290,7 @@ class SSHExecTool(MCPTool):
             # 处理跳板机
             sock = None
             if host_config.jump:
-                jump_config = self.config.jumps.get(host_config.jump)
+                jump_config = config.jumps.get(host_config.jump)
                 if jump_config:
                     # 创建跳板机连接
                     jump_client = paramiko.SSHClient()
@@ -297,16 +347,14 @@ class SSHExecTool(MCPTool):
 class SSHExecBatchTool(MCPTool):
     """SSH 批量执行 Tool."""
 
-    def __init__(self, config: FlowPilotConfig, policy_engine: PolicyEngine) -> None:
+    def __init__(self, policy_engine: PolicyEngine) -> None:
         """初始化批量 SSH Tool.
 
         Args:
-            config: FlowPilot 配置
             policy_engine: 策略引擎
         """
-        self.config = config
         self.policy_engine = policy_engine
-        self.ssh_exec_tool = SSHExecTool(config, policy_engine)
+        self.ssh_exec_tool = SSHExecTool(policy_engine)
 
     @property
     def name(self) -> str:

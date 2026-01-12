@@ -7,6 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.orm import Session
+
+from flowpilot.core.db import SessionLocal
+from flowpilot.core.models import Host, Tag
+
 
 def parse_ssh_config(config_path: str | Path | None = None) -> list[dict[str, Any]]:
     """解析 SSH config 文件.
@@ -177,3 +182,46 @@ def format_hosts_yaml(hosts: dict[str, dict[str, Any]]) -> str:
         lines.append("")  # 空行分隔
 
     return "\n".join(lines)
+
+
+def save_hosts_to_db(hosts: dict[str, dict[str, Any]]) -> int:
+    """Save hosts configuration to database.
+    
+    Args:
+        hosts: FlowPilot hosts configuration
+        
+    Returns:
+        Number of hosts saved
+    """
+    count = 0
+    with SessionLocal() as db:
+        for name, config in hosts.items():
+            # Check exist
+            host = db.query(Host).filter_by(name=name).first()
+            if not host:
+                host = Host(name=name)
+                db.add(host)
+                count += 1
+            
+            host.env = config.get("env", "dev")
+            host.user = config.get("user", "root")
+            host.addr = config.get("addr", "")
+            host.port = config.get("port", 22)
+            host.jump = config.get("jump")
+            host.ssh_key = config.get("ssh_key")
+            host.description = config.get("description", "")
+            host.group = config.get("group", "default")
+            
+            # Simple tag handling (create if not exist)
+            if "tags" in config:
+                current_tags = []
+                for t_name in config["tags"]:
+                    tag = db.query(Tag).filter_by(name=t_name).first()
+                    if not tag:
+                        tag = Tag(name=t_name)
+                        db.add(tag)
+                    current_tags.append(tag)
+                host.tags = current_tags
+        
+        db.commit()
+    return count

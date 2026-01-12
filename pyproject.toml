@@ -43,6 +43,9 @@ dependencies = [
     "python-dateutil>=2.8",           # 时间解析
     "zai-sdk>=0.0.3.4",
     "google-genai>=1.57.0",
+    # MCP Server
+    "fastapi>=0.115.0",               # Web 框架
+    "uvicorn[standard]>=0.30.0",      # ASGI 服务器
 ]
 
 [project.optional-dependencies]
@@ -117,6 +120,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = [
     "-ra",
     "--strict-markers",

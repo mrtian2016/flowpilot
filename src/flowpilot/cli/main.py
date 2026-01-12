@@ -58,30 +58,29 @@ def main(
 def init() -> None:
     """初始化 FlowPilot 配置."""
     console.print("[bold green]初始化 FlowPilot 配置...[/bold green]")
-
-    config_dir = Path.home() / ".flowpilot"
-    config_file = config_dir / "config.yaml"
-
-    # 创建配置目录
-    if not config_dir.exists():
-        config_dir.mkdir(parents=True)
-        console.print(f"✅ 创建配置目录: {config_dir}")
-
-    # 复制配置模板
-    if config_file.exists():
-        overwrite = Confirm.ask(f"配置文件已存在: {config_file}，是否覆盖？")
-        if not overwrite:
-            console.print("❌ 取消初始化")
-            return
-
-    # 查找示例配置文件
-    example_config = Path(__file__).parent.parent.parent.parent / "config.example.yaml"
-    if example_config.exists():
-        shutil.copy(example_config, config_file)
-        console.print(f"✅ 创建配置文件: {config_file}")
+    
+    from flowpilot.core.db import init_db, DB_DIR, DB_FILE
+    
+    # 初始化数据库
+    if not DB_DIR.exists():
+        console.print(f"创建配置目录: {DB_DIR}")
+    
+    if DB_FILE.exists():
+        console.print(f"✅ 数据库已存在: {DB_FILE}")
     else:
-        console.print(f"⚠️  示例配置文件未找到: {example_config}")
-        console.print(f"请手动创建配置文件: {config_file}")
+        init_db()
+        console.print(f"✅ 初始化数据库: {DB_FILE}")
+
+    # 检查是否有旧的 config.yaml需要导入
+    old_config = DB_DIR / "config.yaml"
+    if old_config.exists():
+        if Confirm.ask(f"发现旧配置文件 {old_config}，是否导入到数据库？"):
+            from flowpilot.config.yaml_importer import import_yaml_to_db
+            try:
+                import_yaml_to_db(old_config)
+                console.print("✅ 导入成功！")
+            except Exception as e:
+                console.print(f"[red]❌ 导入失败: {e}[/red]")
 
     # 提示配置 API Keys
     console.print("\n[bold yellow]⚠️  请配置 API Keys：[/bold yellow]")
@@ -91,8 +90,24 @@ def init() -> None:
     console.print("  export ZHIPU_API_KEY=...")
 
     console.print("\n[bold green]✅ 初始化完成！[/bold green]")
-    console.print(f"配置文件: {config_file}")
-    console.print("编辑配置后运行: flowpilot config validate")
+
+
+@app.command(name="config-import")
+def config_import(
+    file: Path = typer.Argument(..., help="YAML 配置文件路径"),
+) -> None:
+    """导入 YAML 配置到数据库."""
+    from flowpilot.config.yaml_importer import import_yaml_to_db
+    
+    if not file.exists():
+        console.print(f"[red]文件不存在: {file}[/red]")
+        return
+        
+    try:
+        import_yaml_to_db(file)
+        console.print(f"[green]✅ 配置已从 {file} 导入到数据库[/green]")
+    except Exception as e:
+        console.print(f"[red]❌ 导入失败: {e}[/red]")
 
 
 @app.command()
@@ -149,9 +164,9 @@ async def _chat_async(
         tool_registry = ToolRegistry()
 
         # 注册 SSH Tools
-        ssh_tool = SSHExecTool(config, policy_engine)
+        ssh_tool = SSHExecTool(policy_engine)
         tool_registry.register(ssh_tool)
-        tool_registry.register(SSHExecBatchTool(config, policy_engine))
+        tool_registry.register(SSHExecBatchTool(policy_engine))
 
         # 注册日志 Tools
         from flowpilot.tools.logs import DockerLogsTool, LogSearchTool, LogTailTool
@@ -504,20 +519,13 @@ def _config_show() -> None:
     """显示配置."""
     try:
         loader = ConfigLoader()
-        config_path = loader.config_path
-
-        if not config_path.exists():
-            console.print(f"[red]❌ 配置文件不存在: {config_path}[/red]")
-            return
-
-        with open(config_path, encoding="utf-8") as f:
-            content = f.read()
-
-        console.print(f"\n[bold]配置文件: {config_path}[/bold]\n")
-        console.print(content)
+        config = loader.load()
+        console.print(config.model_dump())
 
     except Exception as e:
         console.print(f"[red]❌ 读取配置失败: {e}[/red]")
+        import traceback
+        traceback.print_exc()
 
 
 def _config_validate() -> None:
@@ -537,11 +545,8 @@ def _config_validate() -> None:
 
 def _config_edit() -> None:
     """编辑配置."""
-    loader = ConfigLoader()
-    config_path = loader.config_path
-
-    editor = os.getenv("EDITOR", "vim")
-    os.system(f"{editor} {config_path}")
+    console.print("[yellow]⚠️  配置现已存储在数据库中，不支持直接编辑。[/yellow]")
+    console.print("请使用 'flowpilot config-import' 导入 YAML 或相关命令管理。")
 
 
 @app.command(name="import-hosts")
@@ -564,19 +569,18 @@ def import_hosts(
         "-o",
         help="输出到文件（默认输出到终端）",
     ),
-    append: bool = typer.Option(
+    save: bool = typer.Option(
         False,
-        "--append",
-        "-a",
-        help="追加到现有配置文件",
+        "--save",
+        help="保存到数据库",
     ),
 ) -> None:
     """从 SSH 配置文件导入主机到 FlowPilot.
 
     示例：
-        flowpilot import-hosts                     # 预览导入内容
-        flowpilot import-hosts -o hosts.yaml      # 输出到文件
-        flowpilot import-hosts --append           # 追加到现有配置
+        flowpilot import-hosts                     # 预览
+        flowpilot import-hosts --save              # 保存到数据库
+        flowpilot import-hosts -o hosts.yaml      # 导出为 YAML
     """
     from pathlib import Path
 
@@ -584,6 +588,7 @@ def import_hosts(
         convert_to_flowpilot_hosts,
         format_hosts_yaml,
         parse_ssh_config,
+        save_hosts_to_db,
     )
 
     # 解析 SSH 配置
@@ -602,31 +607,17 @@ def import_hosts(
 
     # 转换为 FlowPilot 格式
     flowpilot_hosts = convert_to_flowpilot_hosts(ssh_hosts, default_env=env)
-    yaml_content = format_hosts_yaml(flowpilot_hosts)
-
-    # 输出
-    if append:
-        # 追加到现有配置
-        config_path = Path.home() / ".flowpilot" / "config.yaml"
-        if not config_path.exists():
-            console.print(f"[red]❌ 配置文件不存在: {config_path}[/red]")
-            console.print("请先运行: flowpilot init")
-            return
-
-        console.print(f"\n[bold yellow]⚠️  将追加到: {config_path}[/bold yellow]")
-        confirm = typer.confirm("确认追加？")
-        if not confirm:
-            console.print("[yellow]取消操作[/yellow]")
-            return
-
-        with open(config_path, "a", encoding="utf-8") as f:
-            f.write("\n# 从 SSH 配置导入的主机\n")
-            f.write(yaml_content)
-
-        console.print(f"[green]✅ 已追加到: {config_path}[/green]")
-
+    
+    if save:
+        try:
+            count = save_hosts_to_db(flowpilot_hosts)
+            console.print(f"\n[green]✅ 已保存 {count} 个主机到数据库[/green]")
+        except Exception as e:
+            console.print(f"\n[red]❌ 保存失败: {e}[/red]")
+            
     elif output:
         # 输出到文件
+        yaml_content = format_hosts_yaml(flowpilot_hosts)
         output_path = Path(output).expanduser()
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
@@ -634,9 +625,10 @@ def import_hosts(
 
     else:
         # 预览输出
+        yaml_content = format_hosts_yaml(flowpilot_hosts)
         console.print("\n[bold]FlowPilot 格式配置（预览）:[/bold]\n")
         console.print(yaml_content)
-        console.print("[dim]使用 --output 或 --append 保存配置[/dim]")
+        console.print("[dim]使用 --save 保存到数据库，或 --output 导出到文件[/dim]")
 
 
 @app.command()
@@ -770,7 +762,7 @@ async def _exec_async(host: str, command: str, yes: bool) -> None:
 
         from flowpilot.tools.ssh import SSHExecTool, SSHExecBatchTool
 
-        ssh_tool = SSHExecTool(config, policy_engine)
+        ssh_tool = SSHExecTool(policy_engine)
 
         # 检查是否是分组批量执行
         if host.startswith("@"):
@@ -794,7 +786,7 @@ async def _exec_async(host: str, command: str, yes: bool) -> None:
                     return
 
             # 批量执行
-            batch_tool = SSHExecBatchTool(config, policy_engine)
+            batch_tool = SSHExecBatchTool(policy_engine)
             result = await batch_tool.execute(hosts=target_hosts, command=command)
             console.print(f"\n{result.output}")
 
@@ -816,6 +808,38 @@ async def _exec_async(host: str, command: str, yes: bool) -> None:
         console.print(f"[red]❌ {e}[/red]")
     except Exception as e:
         console.print(f"[red]❌ 执行失败: {e}[/red]")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="监听地址"),
+    port: int = typer.Option(8765, "--port", "-p", help="监听端口"),
+    reload: bool = typer.Option(False, "--reload", help="开发模式热重载"),
+    log_level: str = typer.Option("info", "--log-level", "-l", help="日志级别"),
+) -> None:
+    """启动 MCP Server (SSE over HTTP).
+
+    Examples:
+        flowpilot serve                     # 默认端口 8765
+        flowpilot serve -p 9000             # 自定义端口
+        flowpilot serve --reload            # 开发模式
+    """
+    import uvicorn
+
+    console.print("[bold green]🚀 启动 FlowPilot MCP Server[/bold green]")
+    console.print(f"地址: http://{host}:{port}")
+    console.print(f"SSE 端点: http://{host}:{port}/sse")
+    console.print(f"消息端点: http://{host}:{port}/message")
+    console.print(f"健康检查: http://{host}:{port}/health")
+    console.print("\n按 Ctrl+C 停止服务\n")
+
+    uvicorn.run(
+        "flowpilot.mcp.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=log_level,
+    )
 
 
 if __name__ == "__main__":
