@@ -3,8 +3,9 @@
 from typing import Any
 
 from flowpilot.core.db import SessionLocal
-from flowpilot.core.models import Host, Tag
 from flowpilot.config.loader import load_config as get_config
+from flowpilot.core.services import HostService
+from flowpilot.core.schemas import HostCreate, HostUpdate
 from .base import MCPTool, ToolResult, ToolStatus
 
 
@@ -48,24 +49,21 @@ class HostAddTool(MCPTool):
 
         try:
             with SessionLocal() as db:
-                # 检查是否存在
-                existing = db.query(Host).filter_by(name=alias).first()
-                if existing:
-                     return ToolResult(status=ToolStatus.ERROR, error=f"主机 '{alias}' 已存在于数据库中")
-                
-                # 创建新主机
-                host = Host(
+                service = HostService(db)
+                data = HostCreate(
                     name=alias,
-                    env=env,
-                    user=user,
                     addr=addr,
+                    user=user,
+                    env=env,
                     port=port,
-                    jump=jump,
                     description=description,
-                    group=group
+                    group=group,
+                    jump=jump
                 )
-                db.add(host)
-                db.commit()
+                try:
+                    service.create(data)
+                except ValueError as e:
+                    return ToolResult(status=ToolStatus.ERROR, error=str(e))
 
             return ToolResult(
                 status=ToolStatus.SUCCESS,
@@ -101,7 +99,7 @@ class HostListTool(MCPTool):
         env_filter = kwargs.get("env")
 
         try:
-            # 使用混合加载器获取完整配置
+            # 使用混合加载器获取完整配置 (ConfigLoader accesses DB directly, ideally refactor later)
             config = get_config()
             hosts = config.hosts
 
@@ -166,12 +164,11 @@ class HostRemoveTool(MCPTool):
 
         try:
             with SessionLocal() as db:
-                host = db.query(Host).filter_by(name=alias).first()
-                if not host:
+                service = HostService(db)
+                try:
+                    service.delete(alias)
+                except ValueError:
                     return ToolResult(status=ToolStatus.ERROR, error=f"数据库中未找到主机 '{alias}' (若是 config.yaml 中的配置则无法直接删除)")
-                
-                db.delete(host)
-                db.commit()
 
             return ToolResult(status=ToolStatus.SUCCESS, output=f"✅ 已从数据库移除主机: {alias}")
 
@@ -209,7 +206,8 @@ class HostUpdateTool(MCPTool):
         try:
             updates = []
             with SessionLocal() as db:
-                host = db.query(Host).filter_by(name=alias).first()
+                service = HostService(db)
+                host = service.get(alias)
                 
                 # 如果数据库没有，可能是想覆盖 YAML 中的配置，我们需要新建一个条目
                 if not host:
@@ -220,7 +218,7 @@ class HostUpdateTool(MCPTool):
                     
                     # 从 YAML 复制基本信息到 DB 用于覆盖
                     yaml_host = config.hosts[alias]
-                    host = Host(
+                    create_data = HostCreate(
                         name=alias,
                         env=yaml_host.env,
                         user=yaml_host.user,
@@ -231,23 +229,34 @@ class HostUpdateTool(MCPTool):
                         group=yaml_host.group or "default",
                         ssh_key=yaml_host.ssh_key
                     )
-                    db.add(host)
+                    service.create(create_data)
                     updates.append("(从 YAML 复制并创建数据库覆盖项)")
-
+                    # Refresh host from DB? Service create returns host, but we are inside 'with db'
+                    # Service.create uses db.add/commit.
+                    # We can continue to update it.
+                
+                # Prepare update data
+                update_data = HostUpdate()
+                has_updates = False
+                
                 if "description" in kwargs:
-                    host.description = kwargs["description"]
+                    update_data.description = kwargs["description"]
                     updates.append(f"备注: {kwargs['description']}")
+                    has_updates = True
                 if "group" in kwargs:
-                    host.group = kwargs["group"]
+                    update_data.group = kwargs["group"]
                     updates.append(f"分组: {kwargs['group']}")
+                    has_updates = True
                 if "env" in kwargs:
-                    host.env = kwargs["env"]
+                    update_data.env = kwargs["env"]
                     updates.append(f"环境: {kwargs['env']}")
+                    has_updates = True
 
-                if not updates:
+                if not has_updates and not updates: # if no new updates and no creation
                     return ToolResult(status=ToolStatus.SUCCESS, output="未指定要更新的字段")
 
-                db.commit()
+                if has_updates:
+                    service.update(alias, update_data)
 
             return ToolResult(status=ToolStatus.SUCCESS, output=f"✅ 已更新主机 {alias}:\n  " + "\n  ".join(updates))
 

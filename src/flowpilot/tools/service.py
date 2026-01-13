@@ -2,9 +2,8 @@
 
 from typing import Any
 
-from flowpilot.config.loader import load_config
 from flowpilot.core.db import SessionLocal
-from flowpilot.core.models import Host, HostService
+from flowpilot.core.services import HostService
 
 from .base import MCPTool, ToolResult, ToolStatus
 from .ssh import SSHExecTool
@@ -45,24 +44,8 @@ class ServiceListTool(MCPTool):
 
         try:
             with SessionLocal() as db:
-                query = db.query(HostService).join(Host)
-
-                # 按主机过滤
-                if host_query:
-                    query = query.filter(
-                        (Host.name.ilike(f"%{host_query}%"))
-                        | (Host.description.ilike(f"%{host_query}%"))
-                    )
-
-                # 按服务过滤
-                if service_query:
-                    query = query.filter(
-                        (HostService.name.ilike(f"%{service_query}%"))
-                        | (HostService.service_name.ilike(f"%{service_query}%"))
-                        | (HostService.description.ilike(f"%{service_query}%"))
-                    )
-
-                services = query.all()
+                host_svc = HostService(db)
+                services = host_svc.search_services(q_host=host_query, q_service=service_query)
 
                 if not services:
                     return ToolResult(
@@ -74,6 +57,7 @@ class ServiceListTool(MCPTool):
                 lines = ["## 主机服务列表\n"]
                 current_host = None
                 for svc in services:
+                    # Note: svc is HostServiceModel. svc.host is accessible because session is open.
                     if current_host != svc.host.name:
                         current_host = svc.host.name
                         host_desc = svc.host.description or svc.host.name
@@ -148,22 +132,8 @@ class ServiceControlTool(MCPTool):
         try:
             # 1. 查找匹配的服务
             with SessionLocal() as db:
-                query = db.query(HostService).join(Host)
-
-                # 按主机匹配
-                query = query.filter(
-                    (Host.name.ilike(f"%{host_query}%"))
-                    | (Host.description.ilike(f"%{host_query}%"))
-                )
-
-                # 按服务匹配
-                query = query.filter(
-                    (HostService.name.ilike(f"%{service_query}%"))
-                    | (HostService.service_name.ilike(f"%{service_query}%"))
-                    | (HostService.description.ilike(f"%{service_query}%"))
-                )
-
-                services = query.all()
+                host_svc = HostService(db)
+                services = host_svc.search_services(q_host=host_query, q_service=service_query)
 
                 if not services:
                     return ToolResult(
@@ -172,7 +142,7 @@ class ServiceControlTool(MCPTool):
                     )
 
                 if len(services) > 1:
-                    # 多个匹配，让用户选择
+                    # 多个匹配，让用户选择 (Accessing attributes while session is open)
                     matches = [
                         f"- {s.host.name} ({s.host.description}): {s.name} ({s.service_name})"
                         for s in services
@@ -188,6 +158,8 @@ class ServiceControlTool(MCPTool):
                 host_name = matched_service.host.name
                 service_name = matched_service.service_name
                 service_type = matched_service.service_type
+                service_display_name = matched_service.name
+                host_desc = matched_service.host.description or host_name
 
             # 2. 构建命令
             command = self._build_command(service_type, service_name, action)
@@ -204,7 +176,7 @@ class ServiceControlTool(MCPTool):
             if result.status == ToolStatus.SUCCESS:
                 return ToolResult(
                     status=ToolStatus.SUCCESS,
-                    output=f"✅ 已对 {matched_service.host.description or host_name} 的 {matched_service.name} 执行 {action}\n\n{result.output}",
+                    output=f"✅ 已对 {host_desc} 的 {service_display_name} 执行 {action}\n\n{result.output}",
                     metadata={
                         "host": host_name,
                         "service": service_name,

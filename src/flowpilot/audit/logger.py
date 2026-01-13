@@ -2,7 +2,7 @@
 
 import os
 import socket
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from ..core.db import SessionLocal
@@ -33,7 +33,7 @@ class AuditLogger:
         with SessionLocal() as session:
             record = AuditSession(
                 session_id=session_id,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user=os.getenv("USER", "unknown"),
                 hostname=socket.gethostname(),
                 input=user_input,
